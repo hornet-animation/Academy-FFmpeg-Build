@@ -52,16 +52,23 @@ jobs:
         with:
           msystem: MINGW64
           update: true
-          install: git make mingw-w64-x86_64-toolchain
+          install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
 
       - uses: astral-sh/setup-uv@v5
+        if: matrix.os != 'windows-latest'
         with:
           enable-cache: true
           python-version: '3.12'
 
-      - name: Create venv
+      - name: Create venv (Linux)
+        if: matrix.os != 'windows-latest'
         working-directory: conan
         run: uv venv --seed
+
+      - name: Create venv (Windows)
+        if: matrix.os == 'windows-latest'
+        working-directory: conan
+        run: python -m venv .venv
 
       - name: Build ffmpeg
         working-directory: conan
