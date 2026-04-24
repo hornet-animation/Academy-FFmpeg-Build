@@ -85,6 +85,9 @@ jobs:
             source .venv/Scripts/activate
           fi
           which python && which pip3
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            sed -i '/--noconfirm/!s/pacman -S /pacman -S --noconfirm /' ./${{ matrix.setup }}
+          fi
           source ./${{ matrix.setup }}
           source ./${{ matrix.build }}
 
