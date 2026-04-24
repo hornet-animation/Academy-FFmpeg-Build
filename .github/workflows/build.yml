@@ -1,0 +1,120 @@
+name: build-ffmpeg
+on:
+  workflow_dispatch:
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.r.outputs.sha }}
+      tag: ${{ steps.r.outputs.tag }}
+    steps:
+      - id: r
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA=$(gh api repos/AcademySoftwareFoundation/EncodingGuidelines/commits/main --jq .sha)
+          SHORT=${SHA:0:7}
+          DATE=$(date -u +%Y%m%d)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "tag=build-${DATE}-${SHORT}" >> $GITHUB_OUTPUT
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            setup: linux-osx-setup.sh
+            build: ffmpeg-8.1-rhel9-build.sh
+            shell: bash
+            src_dir: build-rhel9/full_deploy
+            artifact_name: ffmpeg-linux-x86_64
+          - os: windows-latest
+            setup: windows-setup.sh
+            build: windows_ffmpeg_build.sh
+            shell: 'msys2 {0}'
+            src_dir: build-windows/full_deploy
+            artifact_name: ffmpeg-windows-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: AcademySoftwareFoundation/EncodingGuidelines
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - if: matrix.os == 'windows-latest'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: git make mingw-w64-x86_64-toolchain
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: '3.12'
+
+      - name: Create venv
+        working-directory: conan
+        run: uv venv --seed
+
+      - name: Build ffmpeg
+        working-directory: conan
+        run: |
+          if [ -f .venv/bin/activate ]; then
+            source .venv/bin/activate
+          else
+            source .venv/Scripts/activate
+          fi
+          which python && which pip3
+          source ./${{ matrix.setup }}
+          source ./${{ matrix.build }}
+
+      - name: Package build
+        working-directory: conan
+        shell: bash
+        run: |
+          NAME="${{ matrix.artifact_name }}"
+          SRC="${{ matrix.src_dir }}"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a "${NAME}.zip" "./${SRC}/*"
+          else
+            (cd "$SRC" && zip -r "../../${NAME}.zip" .)
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: conan/${{ matrix.artifact_name }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: sha256sum *.zip > SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
+          name: ${{ needs.resolve.outputs.tag }}
+          body: |
+            Built from AcademySoftwareFoundation/EncodingGuidelines @ `${{ needs.resolve.outputs.sha }}`
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt
