@@ -76,6 +76,12 @@ jobs:
           mkdir -p ~/.conan2
           echo "tools.system.package_manager:sudo=True" >> ~/.conan2/global.conf
 
+      - name: Install system nasm
+        # Upstream libvmaf recipe comments out nasm in build_requirements, but
+        # meson still demands it. Workaround until upstream enables it.
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y nasm
+
       - name: Build ffmpeg
         working-directory: conan
         run: |
