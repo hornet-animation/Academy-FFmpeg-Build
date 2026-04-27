@@ -1,43 +1,6 @@
 name: build-ffmpeg
 on:
   workflow_dispatch:
-    inputs:
-      linux_setup:
-        description: 'Linux setup script'
-        type: string
-        default: linux-osx-setup.sh
-      linux_build:
-        description: 'Linux build script'
-        type: string
-        default: ffmpeg-8.1-rhel9-build.sh
-      windows_setup:
-        description: 'Windows setup script'
-        type: string
-        default: windows-setup.sh
-      windows_build:
-        description: 'Windows build script'
-        type: string
-        default: ffmpeg-8.1-windows-build.sh
-      skip_linux:
-        description: 'Skip Linux build'
-        type: boolean
-        default: false
-      skip_windows:
-        description: 'Skip Windows build'
-        type: boolean
-        default: false
-      linux_runner:
-        description: 'Linux runner label'
-        type: string
-        default: ubuntu-latest
-      windows_runner:
-        description: 'Windows runner label'
-        type: string
-        default: windows-latest
-      tag_prefix:
-        description: 'Release tag prefix'
-        type: string
-        default: build-
 
 jobs:
   resolve:
@@ -54,36 +17,29 @@ jobs:
           SHORT=${SHA:0:7}
           DATE=$(date -u +%Y%m%d)
           echo "sha=$SHA" >> $GITHUB_OUTPUT
-          echo "tag=${{ inputs.tag_prefix }}${DATE}-${SHORT}" >> $GITHUB_OUTPUT
-
-  configure:
-    needs: resolve
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set.outputs.matrix }}
-    steps:
-      - id: set
-        run: |
-          entries=()
-          if [ "${{ inputs.skip_linux }}" != "true" ]; then
-            entries+=('{"platform":"linux","runner":"${{ inputs.linux_runner }}","setup":"${{ inputs.linux_setup }}","build":"${{ inputs.linux_build }}","shell":"bash","src_dir":"build-rhel9/full_deploy","artifact_name":"ffmpeg-linux-x86_64"}')
-          fi
-          if [ "${{ inputs.skip_windows }}" != "true" ]; then
-            entries+=('{"platform":"windows","runner":"${{ inputs.windows_runner }}","setup":"${{ inputs.windows_setup }}","build":"${{ inputs.windows_build }}","shell":"msys2 {0}","src_dir":"build-windows/full_deploy","artifact_name":"ffmpeg-windows-x86_64"}')
-          fi
-          if [ ${#entries[@]} -eq 0 ]; then
-            MATRIX_JSON='{"include":[]}'
-          else
-            MATRIX_JSON=$(printf "%s\n" "${entries[@]}" | jq -sc '. | {include: .}')
-          fi
-          echo "matrix=$MATRIX_JSON" >> $GITHUB_OUTPUT
+          echo "tag=build-${DATE}-${SHORT}" >> $GITHUB_OUTPUT
 
   build:
-    needs: [resolve, configure]
+    needs: resolve
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.configure.outputs.matrix) }}
-    runs-on: ${{ matrix.runner }}
+      matrix:
+        include:
+          - os: ubuntu-latest
+            setup: linux-osx-setup.sh
+            build: ffmpeg-8.1-rhel9-build.sh
+            shell: bash
+            build_shell: bash
+            src_dir: build-rhel9/full_deploy
+            artifact_name: ffmpeg-linux-x86_64
+          - os: windows-latest
+            setup: windows-setup.sh
+            build: ffmpeg-8.1-windows-build.sh
+            shell: pwsh
+            build_shell: 'msys2 {0}'
+            src_dir: build-windows/full_deploy
+            artifact_name: ffmpeg-windows-x86_64
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: ${{ matrix.shell }}
@@ -93,18 +49,7 @@ jobs:
           repository: AcademySoftwareFoundation/EncodingGuidelines
           ref: ${{ needs.resolve.outputs.sha }}
 
-      - name: workflow config
-        shell: bash
-        run: |
-          echo "Platform     : ${{ matrix.platform }}"
-          echo "Runner       : ${{ matrix.runner }}"
-          echo "Setup script : ${{ matrix.setup }}"
-          echo "Build script : ${{ matrix.build }}"
-          echo "Shell        : ${{ matrix.shell }}"
-          echo "Src dir      : ${{ matrix.src_dir }}"
-          echo "Artifact     : ${{ matrix.artifact_name }}"
-
-      - if: matrix.platform == 'windows'
+      - if: matrix.os == 'windows-latest'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
@@ -112,23 +57,24 @@ jobs:
           install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
 
       - uses: astral-sh/setup-uv@v5
-        if: matrix.platform != 'windows'
+        if: matrix.os != 'windows-latest'
         with:
           enable-cache: true
           python-version: '3.12'
 
       - name: Create venv (Linux)
-        if: matrix.platform != 'windows'
+        if: matrix.os != 'windows-latest'
         working-directory: conan
         run: uv venv --seed
 
       - name: Create venv (Windows)
-        if: matrix.platform == 'windows'
+        if: matrix.os == 'windows-latest'
         working-directory: conan
+        shell: 'msys2 {0}'
         run: python -m venv .venv
 
       - name: Configure Conan package manager sudo
-        if: matrix.platform == 'linux'
+        if: matrix.os == 'ubuntu-latest'
         run: |
           mkdir -p ~/.conan2
           echo "tools.system.package_manager:sudo=True" >> ~/.conan2/global.conf
@@ -136,11 +82,12 @@ jobs:
       - name: Install system nasm
         # Upstream libvmaf recipe comments out nasm in build_requirements, but
         # meson still demands it. Workaround until upstream enables it.
-        if: matrix.platform == 'linux'
+        if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y nasm
 
       - name: Build ffmpeg
         working-directory: conan
+        shell: ${{ matrix.build_shell }}
         run: |
           if [ -f .venv/bin/activate ]; then
             source .venv/bin/activate
@@ -148,7 +95,7 @@ jobs:
             source .venv/Scripts/activate
           fi
           which python && which pip3
-          if [ "${{ matrix.platform }}" = "windows" ]; then
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
             sed -i '/--noconfirm/!s/pacman -S /pacman -S --noconfirm /' ./${{ matrix.setup }}
             sed -i 's/\r$//' ./${{ matrix.setup }}
             sed -i 's/\r$//' ./${{ matrix.build }}
@@ -162,7 +109,7 @@ jobs:
         run: |
           NAME="${{ matrix.artifact_name }}"
           SRC="${{ matrix.src_dir }}"
-          if [ "${{ matrix.platform }}" = "windows" ]; then
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
             7z a "${NAME}.zip" "./${SRC}/*"
           else
             (cd "$SRC" && zip -r "../../${NAME}.zip" .)
@@ -177,7 +124,6 @@ jobs:
 
   release:
     needs: [resolve, build]
-    if: always() && needs.resolve.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'failure')
     runs-on: ubuntu-latest
     permissions:
       contents: write
