@@ -52,7 +52,16 @@ jobs:
         with:
           msystem: MINGW64
           update: true
+          path-type: strict
           install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
+
+      - if: matrix.os == 'windows-latest'
+        name: Diagnose MSYS2 tool resolution
+        run: |
+          echo "PATH=$PATH"
+          which sed install sh make
+          sed --version | head -1
+          install --version | head -1
 
       - uses: astral-sh/setup-uv@v5
         if: matrix.os != 'windows-latest'
