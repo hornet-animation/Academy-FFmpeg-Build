@@ -29,14 +29,12 @@ jobs:
             setup: linux-osx-setup.sh
             build: ffmpeg-8.1-rhel9-build.sh
             shell: bash
-            build_shell: bash
             src_dir: build-rhel9/full_deploy
             artifact_name: ffmpeg-linux-x86_64
           - os: windows-latest
             setup: windows-setup.sh
             build: ffmpeg-8.1-windows-build.sh
-            shell: pwsh
-            build_shell: 'msys2 {0}'
+            shell: 'msys2 {0}'
             src_dir: build-windows/full_deploy
             artifact_name: ffmpeg-windows-x86_64
     runs-on: ${{ matrix.os }}
@@ -70,7 +68,6 @@ jobs:
       - name: Create venv (Windows)
         if: matrix.os == 'windows-latest'
         working-directory: conan
-        shell: 'msys2 {0}'
         run: python -m venv .venv
 
       - name: Configure Conan package manager sudo
@@ -87,7 +84,6 @@ jobs:
 
       - name: Build ffmpeg
         working-directory: conan
-        shell: ${{ matrix.build_shell }}
         run: |
           if [ -f .venv/bin/activate ]; then
             source .venv/bin/activate
