@@ -53,7 +53,7 @@ jobs:
           msystem: MINGW64
           update: true
           path-type: strict
-          install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python groff
+          install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
 
       - if: matrix.os == 'windows-latest'
         name: Configure Conan serial jobs for Windows
@@ -88,6 +88,26 @@ jobs:
         # meson still demands it. Workaround until upstream enables it.
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y nasm
+
+      - name: Create Conan hook to disable libffi manpages
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir -p /c/.c2/extensions/hooks
+          cat > /c/.c2/extensions/hooks/pre_build.py << 'PYEOF'
+          import os
+
+          def pre_build(conanfile, **kwargs):
+              if conanfile.ref and conanfile.ref.name == "libffi":
+                  for root, dirs, files in os.walk(conanfile.build_folder):
+                      if "Makefile" in files:
+                          path = os.path.join(root, "Makefile")
+                          with open(path, "r") as f:
+                              content = f.read()
+                          if "install-man3:" in content:
+                              with open(path, "w") as f:
+                                  f.write(content.replace("install-man3:", "install-man3-skip:"))
+                              conanfile.output.info(f"Disabled man3 install in {path}")
+          PYEOF
 
       - name: Build ffmpeg
         working-directory: conan
