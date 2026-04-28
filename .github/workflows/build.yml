@@ -108,6 +108,17 @@ jobs:
           source ./${{ matrix.setup }}
           source ./${{ matrix.build }}
 
+      - if: failure() && matrix.os == 'windows-latest'
+        name: Dump libffi build diagnostics
+        run: |
+          echo "=== libffi build dirs ==="
+          find /c/.c2/p/b -maxdepth 3 -name 'libffi*' -type d 2>/dev/null || true
+          echo "=== man Makefile ==="
+          find /c/.c2/p/b -path '*/build-release/man/Makefile' | while read f; do
+            echo "--- $f ---"
+            cat "$f"
+          done
+
       - name: Package build
         working-directory: conan
         shell: bash
