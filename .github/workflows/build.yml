@@ -55,23 +55,6 @@ jobs:
           path-type: strict
           install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python groff
 
-      - if: failure() && matrix.os == 'windows-latest'
-        name: Dump libffi build diagnostics
-        run: |
-          echo "=== source man/ files ==="
-          find /c/.c2/p/b -path '*/src/man' -type d | while read d; do
-            echo "--- $d ---"; ls -la "$d"
-          done
-          echo "=== build man/ files ==="
-          find /c/.c2/p/b -path '*/build-release/man' -type d | while read d; do
-            echo "--- $d ---"; ls -la "$d"
-          done
-          echo "=== make install dry-run (man dir) ==="
-          find /c/.c2/p/b -path '*/build-release/man/Makefile' | while read f; do
-            echo "--- $f ---"
-            make -n install DESTDIR=/tmp/testinstall -C "$(dirname "$f")" 2>&1 || true
-          done
-
       - uses: astral-sh/setup-uv@v5
         if: matrix.os != 'windows-latest'
         with:
@@ -116,6 +99,23 @@ jobs:
           fi
           source ./${{ matrix.setup }}
           source ./${{ matrix.build }}
+
+      - if: failure() && matrix.os == 'windows-latest'
+        name: Dump libffi build diagnostics
+        run: |
+          echo "=== source man/ files ==="
+          find /c/.c2/p/b -path '*/src/man' -type d | while read d; do
+            echo "--- $d ---"; ls -la "$d"
+          done
+          echo "=== build man/ files ==="
+          find /c/.c2/p/b -path '*/build-release/man' -type d | while read d; do
+            echo "--- $d ---"; ls -la "$d"
+          done
+          echo "=== make install dry-run (man dir) ==="
+          find /c/.c2/p/b -path '*/build-release/man/Makefile' | while read f; do
+            echo "--- $f ---"
+            make -n install DESTDIR=/tmp/testinstall -C "$(dirname "$f")" 2>&1 || true
+          done
 
       - name: Package build
         working-directory: conan
