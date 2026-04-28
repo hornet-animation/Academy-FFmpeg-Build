@@ -55,6 +55,12 @@ jobs:
           path-type: strict
           install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python groff
 
+      - if: matrix.os == 'windows-latest'
+        name: Configure Conan serial jobs for Windows
+        run: |
+          mkdir -p /c/.c2
+          echo 'tools.build:jobs=1' >> /c/.c2/global.conf
+
       - uses: astral-sh/setup-uv@v5
         if: matrix.os != 'windows-latest'
         with:
