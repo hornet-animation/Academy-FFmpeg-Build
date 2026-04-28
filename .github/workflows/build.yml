@@ -53,15 +53,24 @@ jobs:
           msystem: MINGW64
           update: true
           path-type: strict
-          install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
+          install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python groff
 
-      - if: matrix.os == 'windows-latest'
-        name: Diagnose MSYS2 tool resolution
+      - if: failure() && matrix.os == 'windows-latest'
+        name: Dump libffi build diagnostics
         run: |
-          echo "PATH=$PATH"
-          which sed install sh make
-          sed --version | head -1
-          install --version | head -1
+          echo "=== source man/ files ==="
+          find /c/.c2/p/b -path '*/src/man' -type d | while read d; do
+            echo "--- $d ---"; ls -la "$d"
+          done
+          echo "=== build man/ files ==="
+          find /c/.c2/p/b -path '*/build-release/man' -type d | while read d; do
+            echo "--- $d ---"; ls -la "$d"
+          done
+          echo "=== make install dry-run (man dir) ==="
+          find /c/.c2/p/b -path '*/build-release/man/Makefile' | while read f; do
+            echo "--- $f ---"
+            make -n install DESTDIR=/tmp/testinstall -C "$(dirname "$f")" 2>&1 || true
+          done
 
       - uses: astral-sh/setup-uv@v5
         if: matrix.os != 'windows-latest'
@@ -107,17 +116,6 @@ jobs:
           fi
           source ./${{ matrix.setup }}
           source ./${{ matrix.build }}
-
-      - if: failure() && matrix.os == 'windows-latest'
-        name: Dump libffi build diagnostics
-        run: |
-          echo "=== libffi build dirs ==="
-          find /c/.c2/p/b -maxdepth 3 -name 'libffi*' -type d 2>/dev/null || true
-          echo "=== man Makefile ==="
-          find /c/.c2/p/b -path '*/build-release/man/Makefile' | while read f; do
-            echo "--- $f ---"
-            cat "$f"
-          done
 
       - name: Package build
         working-directory: conan
