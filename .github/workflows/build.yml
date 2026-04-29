@@ -93,20 +93,24 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           mkdir -p /c/.c2/extensions/hooks
-          cat > /c/.c2/extensions/hooks/pre_build.py << 'PYEOF'
+          cat > /c/.c2/extensions/hooks/hook_libffi_manpages.py << 'PYEOF'
           import os
+          import re
 
-          def pre_build(conanfile, **kwargs):
-              if conanfile.ref and conanfile.ref.name == "libffi":
-                  for root, dirs, files in os.walk(conanfile.build_folder):
-                      if "Makefile" in files:
-                          path = os.path.join(root, "Makefile")
-                          with open(path, "r") as f:
-                              content = f.read()
-                          if "install-man3:" in content:
-                              with open(path, "w") as f:
-                                  f.write(content.replace("install-man3:", "install-man3-skip:"))
-                              conanfile.output.info(f"Disabled man3 install in {path}")
+          def pre_package(conanfile, **kwargs):
+              if not (conanfile.ref and conanfile.ref.name == "libffi"):
+                  return
+              for root, dirs, files in os.walk(conanfile.build_folder):
+                  if "Makefile" not in files:
+                      continue
+                  path = os.path.join(root, "Makefile")
+                  with open(path, "r") as f:
+                      content = f.read()
+                  new_content = re.sub(r'(?m)^man_MANS\s*=.*$', 'man_MANS =', content)
+                  if new_content != content:
+                      with open(path, "w") as f:
+                          f.write(new_content)
+                      conanfile.output.info(f"Cleared man_MANS in {path}")
           PYEOF
 
       - name: Build ffmpeg
