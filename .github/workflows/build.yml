@@ -51,10 +51,22 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          location: C:\
           update: true
           path-type: inherit
           install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
+
+      - if: matrix.os == 'windows-latest'
+        name: Dump runner toolchain versions
+        run: |
+          pacman -Q mingw-w64-x86_64-binutils mingw-w64-x86_64-gcc \
+                    mingw-w64-x86_64-make mingw-w64-x86_64-libtool \
+                    mingw-w64-x86_64-autotools msys2-runtime bash \
+                    || true
+          echo "---"
+          uname -a
+          echo "MSYS2_ARG_CONV_EXCL=$MSYS2_ARG_CONV_EXCL"
+          echo "MSYSTEM=$MSYSTEM"
+          echo "PATH=$PATH"
 
       - if: matrix.os == 'windows-latest'
         name: Configure Conan serial jobs for Windows
