@@ -56,64 +56,6 @@ jobs:
           install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
 
       - if: matrix.os == 'windows-latest'
-        name: Master env snapshot
-        run: |
-          set +e
-          mkdir -p /tmp/snap && cd /tmp/snap
-
-          pacman -Q | sort > pkgs.txt
-          env | sort > env.txt
-          mount > mounts.txt
-          cat /etc/fstab > fstab.txt 2>&1 || echo "no fstab" > fstab.txt
-          ls -la /etc/profile.d/ > profile_d_listing.txt
-          cat /etc/profile.d/*.sh > profile_d_contents.txt 2>&1 || true
-          ulimit -a > ulimits.txt
-          locale > locale.txt
-          uname -a > uname.txt
-          cygcheck -V > cygcheck.txt 2>&1 || echo "no cygcheck" > cygcheck.txt
-
-          IFS=:; for p in $PATH; do echo "$p"; done > path_lines.txt
-          unset IFS
-
-          {
-            for tool in bash sh sed make gcc windres libtool autoreconf m4 awk grep pkgconf cpp; do
-              echo "== $tool =="
-              type "$tool" 2>&1
-              "$tool" --version 2>&1 | head -1
-            done
-          } > tools.txt
-
-          {
-            ls -la /c/mingw64/bin/gcc.exe 2>&1
-            ls -la "/c/Program Files/Git/usr/bin/sh.exe" 2>&1
-            ls -la "/c/Program Files/Git/usr/bin/sed.exe" 2>&1
-            ls -la /c/msys64 2>&1
-          } > shadow_tools.txt
-
-          {
-            ls -la /d/a/_temp/setup-msys2/ 2>&1 || true
-            cat /d/a/_temp/setup-msys2/msys2.cmd 2>&1 || true
-          } > setup_msys2_dir.txt
-
-          # console-log highlights so failure surfaces on the diff fastest
-          echo "=== pkgs (head) ===" && head -50 pkgs.txt
-          echo "=== mounts ===" && cat mounts.txt
-          echo "=== locale ===" && cat locale.txt
-          echo "=== tools (sed/sh/make) ==="
-          grep -A1 -E '^== (sed|sh|make|libtool) ==' tools.txt
-
-          tar -czf /tmp/runner-snapshot.tgz *.txt
-          ls -la /tmp/runner-snapshot.tgz
-
-      - if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: runner-env-snapshot
-          path: /tmp/runner-snapshot.tgz
-          if-no-files-found: error
-          retention-days: 7
-
-      - if: matrix.os == 'windows-latest'
         name: Configure Conan serial jobs for Windows
         run: |
           mkdir -p /c/.c2
@@ -147,32 +89,10 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y nasm
 
-      - name: Create Conan hook to disable libffi manpages
-        if: matrix.os == 'windows-latest'
-        run: |
-          mkdir -p /c/.c2/extensions/hooks
-          cat > /c/.c2/extensions/hooks/hook_libffi_manpages.py << 'PYEOF'
-          import os
-          import re
-
-          def pre_package(conanfile, **kwargs):
-              if not (conanfile.ref and conanfile.ref.name == "libffi"):
-                  return
-              for root, dirs, files in os.walk(conanfile.build_folder):
-                  if "Makefile" not in files:
-                      continue
-                  path = os.path.join(root, "Makefile")
-                  with open(path, "r") as f:
-                      content = f.read()
-                  new_content = re.sub(r'(?m)^man_MANS\s*=.*$', 'man_MANS =', content)
-                  if new_content != content:
-                      with open(path, "w") as f:
-                          f.write(new_content)
-                      conanfile.output.info(f"Cleared man_MANS in {path}")
-          PYEOF
-
       - name: Build ffmpeg
         working-directory: conan
+        env:
+          LC_ALL: C.UTF-8
         run: |
           if [ -f .venv/bin/activate ]; then
             source .venv/bin/activate
@@ -187,17 +107,6 @@ jobs:
           fi
           source ./${{ matrix.setup }}
           source ./${{ matrix.build }}
-
-      - if: failure() && matrix.os == 'windows-latest'
-        name: Dump libffi build diagnostics
-        run: |
-          find /c/.c2/p/b -path '*/build-release/man/Makefile' | while read f; do
-            mandir="$(dirname "$f")"
-            hash=$(echo "$mandir" | sed 's|.*/\(libff[^/]*\)/.*|\1|')
-            pkgdir="/c/.c2/p/b/${hash}/p"
-            echo "=== install-man3 trace (DESTDIR=$pkgdir) ==="
-            make -C "$mandir" SHELL='sh -x' install-man3 DESTDIR="$pkgdir" 2>&1 | head -80 || true
-          done
 
       - name: Package build
         working-directory: conan
