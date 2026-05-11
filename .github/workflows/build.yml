@@ -83,11 +83,11 @@ jobs:
           mkdir -p ~/.conan2
           echo "tools.system.package_manager:sudo=True" >> ~/.conan2/global.conf
 
-      - name: Install system nasm
-        # Upstream libvmaf recipe comments out nasm in build_requirements, but
-        # meson still demands it. Workaround until upstream enables it.
+      - name: Install system nasm + patchelf
+        # nasm: libvmaf meson still demands it despite recipe comment-out.
+        # patchelf: required by create-linux-bundle.sh to set $ORIGIN/../lib RUNPATH.
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y nasm
+        run: sudo apt-get update && sudo apt-get install -y nasm patchelf
 
       - name: Build ffmpeg
         working-directory: conan
@@ -108,16 +108,46 @@ jobs:
           source ./${{ matrix.setup }}
           source ./${{ matrix.build }}
 
+      - name: Bundle Windows standalone (collect mingw runtime DLLs)
+        if: matrix.os == 'windows-latest'
+        working-directory: conan
+        run: |
+          set -euo pipefail
+          ./create-windows-bundle.sh build-windows/full_deploy/host ffmpeg-windows-standalone
+          # second pass: pull transitive mingw deps that the first pass may have missed
+          cd ffmpeg-windows-standalone
+          for f in *.exe *.dll; do
+            [ -f "$f" ] || continue
+            ldd "$f"
+          done | awk '/=> \// {print $3}' | sort -u \
+            | grep -E '/(mingw64|ucrt64)/bin/' \
+            | xargs -I{} cp -n {} . || true
+          echo "=== final bundle contents ==="
+          ls -la
+
+      - name: Bundle Linux standalone (collect .so deps + patchelf RUNPATH)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: conan
+        run: |
+          set -euo pipefail
+          ./create-linux-bundle.sh build-rhel9/full_deploy/host ffmpeg-linux-standalone
+          echo "=== bundle layout ==="
+          find ffmpeg-linux-standalone -maxdepth 2 -mindepth 1 | sort
+          echo "=== ffmpeg RUNPATH ==="
+          patchelf --print-rpath ffmpeg-linux-standalone/bin/ffmpeg || true
+          echo "=== unresolved deps after bundling (should be only system libs) ==="
+          LD_LIBRARY_PATH=ffmpeg-linux-standalone/lib ldd ffmpeg-linux-standalone/bin/ffmpeg \
+            | (grep "not found" || true)
+
       - name: Package build
         working-directory: conan
         shell: bash
         run: |
           NAME="${{ matrix.artifact_name }}"
-          SRC="${{ matrix.src_dir }}"
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a "${NAME}.zip" "./${SRC}/*"
+            (cd ffmpeg-windows-standalone && 7z a "../${NAME}.zip" "./*")
           else
-            (cd "$SRC" && zip -r "../../${NAME}.zip" .)
+            (cd ffmpeg-linux-standalone && zip -r "../${NAME}.zip" .)
           fi
 
       - uses: actions/upload-artifact@v4
