@@ -31,12 +31,13 @@ jobs:
             shell: bash
             src_dir: build-rhel9/full_deploy
             artifact_name: ffmpeg-linux-x86_64
-          - os: windows-latest
-            setup: windows-setup.sh
-            build: ffmpeg-8.1-windows-build.sh
-            shell: 'msys2 {0}'
-            src_dir: build-windows/full_deploy
-            artifact_name: ffmpeg-windows-x86_64
+          # Windows leg temporarily disabled — re-enable once msys2 build is fixed
+          # - os: windows-latest
+          #   setup: windows-setup.sh
+          #   build: ffmpeg-8.1-windows-build.sh
+          #   shell: 'msys2 {0}'
+          #   src_dir: build-windows/full_deploy
+          #   artifact_name: ffmpeg-windows-x86_64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -159,6 +160,7 @@ jobs:
 
   release:
     needs: [resolve, build]
+    if: always() && needs.resolve.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
