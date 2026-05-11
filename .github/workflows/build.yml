@@ -130,7 +130,7 @@ jobs:
         working-directory: conan
         run: |
           set -euo pipefail
-          ./create-linux-bundle.sh build-rhel9/full_deploy/host ffmpeg-linux-standalone
+          bash create-linux-bundle.sh build-rhel9/full_deploy/host ffmpeg-linux-standalone
           echo "=== bundle layout ==="
           find ffmpeg-linux-standalone -maxdepth 2 -mindepth 1 | sort
           echo "=== ffmpeg RUNPATH ==="
