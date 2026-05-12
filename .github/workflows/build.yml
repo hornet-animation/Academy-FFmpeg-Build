@@ -31,17 +31,20 @@ jobs:
             shell: bash
             src_dir: build-rhel9/full_deploy
             artifact_name: ffmpeg-linux-x86_64
-          # Windows leg temporarily disabled — re-enable once msys2 build is fixed
-          # - os: windows-latest
-          #   setup: windows-setup.sh
-          #   build: ffmpeg-8.1-windows-build.sh
-          #   shell: 'msys2 {0}'
-          #   src_dir: build-windows/full_deploy
-          #   artifact_name: ffmpeg-windows-x86_64
+          - os: windows-latest
+            setup: windows-setup.sh
+            build: ffmpeg-8.1-windows-build.sh
+            shell: 'C:\msys64\usr\bin\bash.exe -leo pipefail {0}'
+            src_dir: build-windows/full_deploy
+            artifact_name: ffmpeg-windows-x86_64
     runs-on: ${{ matrix.os }}
     defaults:
       run:
         shell: ${{ matrix.shell }}
+    env:
+      MSYSTEM: MINGW64
+      MSYS2_PATH_TYPE: minimal
+      CHERE_INVOKING: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -49,12 +52,10 @@ jobs:
           ref: ${{ needs.resolve.outputs.sha }}
 
       - if: matrix.os == 'windows-latest'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          path-type: inherit
-          install: git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
+        name: Install MSYS2 packages (pre-installed C:\msys64)
+        run: |
+          pacman -Sy --noconfirm
+          pacman -S --noconfirm --needed git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
 
       - if: matrix.os == 'windows-latest'
         name: Configure Conan serial jobs for Windows
