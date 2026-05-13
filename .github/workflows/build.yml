@@ -59,9 +59,12 @@ jobs:
 
       - if: matrix.os == 'windows-latest'
         name: Configure Conan serial jobs for Windows
+        # CONAN_HOME must live on the same drive as the workspace (D:) — the
+        # full_deploy deployer calls os.path.relpath(file, package_folder),
+        # which raises ValueError on Windows when the two are on different drives.
         run: |
-          mkdir -p /c/.c2
-          echo 'tools.build:jobs=1' >> /c/.c2/global.conf
+          mkdir -p /d/.c2
+          echo 'tools.build:jobs=1' >> /d/.c2/global.conf
 
       - uses: astral-sh/setup-uv@v5
         if: matrix.os != 'windows-latest'
@@ -106,6 +109,8 @@ jobs:
             sed -i '/--noconfirm/!s/pacman -S /pacman -S --noconfirm /' ./${{ matrix.setup }}
             sed -i 's/\r$//' ./${{ matrix.setup }}
             sed -i 's/\r$//' ./${{ matrix.build }}
+            # Conan cache must share the workspace drive (D:) — see workflow comment above.
+            sed -i 's|/c/.c2|/d/.c2|g' ./${{ matrix.setup }} ./${{ matrix.build }}
           fi
           source ./${{ matrix.setup }}
           source ./${{ matrix.build }}
