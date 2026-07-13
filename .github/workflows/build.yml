@@ -19,28 +19,95 @@ jobs:
           echo "sha=$SHA" >> $GITHUB_OUTPUT
           echo "tag=build-${DATE}-${SHORT}" >> $GITHUB_OUTPUT
 
-  build:
+  # -----------------------------------------------------------------------
+  # LINUX BUILD -- split out of the old matrix and run inside an actual
+  # rockylinux:9 container, so the resulting binary links against RHEL 9's
+  # glibc (2.34) instead of whatever the bare ubuntu-latest host ships
+  # (Ubuntu 24.04 => glibc 2.39). This is the actual fix for:
+  #   ./ffmpeg: /lib64/libc.so.6: version `GLIBC_2.38' not found
+  # -----------------------------------------------------------------------
+  build-linux:
     needs: resolve
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            setup: linux-osx-setup.sh
-            build: ffmpeg-8.1-rhel9-build.sh
-            shell: bash
-            src_dir: build-rhel9/full_deploy
-            artifact_name: ffmpeg-linux-x86_64
-          - os: windows-latest
-            setup: windows-setup.sh
-            build: ffmpeg-8.1-windows-build.sh
-            shell: 'C:\msys64\usr\bin\bash.exe -leo pipefail {0}'
-            src_dir: build-windows/full_deploy
-            artifact_name: ffmpeg-windows-x86_64
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    container:
+      image: rockylinux:9
+    steps:
+      - name: Install base toolchain (git/tar/python/compilers/nasm/patchelf)
+        # Minimal rockylinux:9 image lacks most of this -- actions/checkout
+        # needs git+tar, Conan needs a compiler toolchain, and nasm/patchelf
+        # are the same two extras the original workflow installed via apt.
+        run: |
+          dnf install -y epel-release
+          dnf groupinstall -y "Development Tools"
+          dnf install -y git tar which zip unzip python3 python3-pip nasm patchelf
+
+      - uses: actions/checkout@v4
+        with:
+          repository: AcademySoftwareFoundation/EncodingGuidelines
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: '3.12'
+
+      - name: Create venv
+        working-directory: conan
+        run: uv venv --seed
+
+      - name: Configure Conan package manager sudo
+        run: |
+          mkdir -p ~/.conan2
+          echo "tools.system.package_manager:sudo=True" >> ~/.conan2/global.conf
+
+      - name: Build ffmpeg
+        working-directory: conan
+        env:
+          LC_ALL: C.UTF-8
+        run: |
+          source .venv/bin/activate
+          which python && which pip3
+          source ./linux-osx-setup.sh
+          source ./ffmpeg-8.1-rhel9-build.sh
+
+      - name: Bundle Linux standalone (collect .so deps + patchelf RUNPATH)
+        working-directory: conan
+        run: |
+          set -euo pipefail
+          bash create-linux-bundle.sh build-rhel9/full_deploy/host ffmpeg-linux-standalone
+          echo "=== bundle layout ==="
+          find ffmpeg-linux-standalone -maxdepth 2 -mindepth 1 | sort
+          echo "=== ffmpeg RUNPATH ==="
+          patchelf --print-rpath ffmpeg-linux-standalone/bin/ffmpeg || true
+          echo "=== unresolved deps after bundling (should be only glibc/libstdc++/ld-linux) ==="
+          LD_LIBRARY_PATH=ffmpeg-linux-standalone/lib ldd ffmpeg-linux-standalone/bin/ffmpeg \
+            | (grep "not found" || true)
+          echo "=== glibc/glibcxx versions this binary actually requires ==="
+          strings ffmpeg-linux-standalone/bin/ffmpeg | grep -oE 'GLIBC_[0-9.]+' | sort -V | uniq | tail -5
+          strings ffmpeg-linux-standalone/bin/ffmpeg | grep -oE 'GLIBCXX_[0-9.]+' | sort -V | uniq | tail -5
+
+      - name: Package build
+        working-directory: conan
+        run: |
+          (cd ffmpeg-linux-standalone && zip -r "../ffmpeg-linux-x86_64.zip" .)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-linux-x86_64
+          path: conan/ffmpeg-linux-x86_64.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  # -----------------------------------------------------------------------
+  # WINDOWS BUILD -- unchanged from the original matrix leg, just pulled
+  # out into its own job now that Linux has its own container-based job.
+  # -----------------------------------------------------------------------
+  build-windows:
+    needs: resolve
+    runs-on: windows-latest
     defaults:
       run:
-        shell: ${{ matrix.shell }}
+        shell: 'C:\msys64\usr\bin\bash.exe -leo pipefail {0}'
     env:
       MSYSTEM: MINGW64
       MSYS2_PATH_TYPE: minimal
@@ -51,75 +118,41 @@ jobs:
           repository: AcademySoftwareFoundation/EncodingGuidelines
           ref: ${{ needs.resolve.outputs.sha }}
 
-      - if: matrix.os == 'windows-latest'
-        name: Install MSYS2 packages (pre-installed C:\msys64)
+      - name: Install MSYS2 packages (pre-installed C:\msys64)
         run: |
           pacman -Sy --noconfirm
           pacman -S --noconfirm --needed git make mingw-w64-x86_64-toolchain mingw-w64-x86_64-python
 
-      - if: matrix.os == 'windows-latest'
-        name: Configure Conan serial jobs for Windows
-        # CONAN_HOME must live on the same drive as the workspace (D:) — the
+      - name: Configure Conan serial jobs for Windows
+        # CONAN_HOME must live on the same drive as the workspace (D:) -- the
         # full_deploy deployer calls os.path.relpath(file, package_folder),
         # which raises ValueError on Windows when the two are on different drives.
         run: |
           mkdir -p /d/.c2
           echo 'tools.build:jobs=1' >> /d/.c2/global.conf
 
-      - uses: astral-sh/setup-uv@v5
-        if: matrix.os != 'windows-latest'
-        with:
-          enable-cache: true
-          python-version: '3.12'
-
-      - name: Create venv (Linux)
-        if: matrix.os != 'windows-latest'
-        working-directory: conan
-        run: uv venv --seed
-
       - name: Create venv (Windows)
-        if: matrix.os == 'windows-latest'
         working-directory: conan
         run: python -m venv .venv
-
-      - name: Configure Conan package manager sudo
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          mkdir -p ~/.conan2
-          echo "tools.system.package_manager:sudo=True" >> ~/.conan2/global.conf
-
-      - name: Install system nasm + patchelf
-        # nasm: libvmaf meson still demands it despite recipe comment-out.
-        # patchelf: required by create-linux-bundle.sh to set $ORIGIN/../lib RUNPATH.
-        if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y nasm patchelf
 
       - name: Build ffmpeg
         working-directory: conan
         env:
           LC_ALL: C.UTF-8
         run: |
-          if [ -f .venv/bin/activate ]; then
-            source .venv/bin/activate
-          else
-            source .venv/Scripts/activate
-          fi
+          source .venv/Scripts/activate
           which python && which pip3
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            sed -i '/--noconfirm/!s/pacman -S /pacman -S --noconfirm /' ./${{ matrix.setup }}
-            sed -i 's/\r$//' ./${{ matrix.setup }}
-            sed -i 's/\r$//' ./${{ matrix.build }}
-            # Conan cache must share the workspace drive (D:) — see workflow comment above.
-            sed -i 's|/c/.c2|/d/.c2|g' ./${{ matrix.setup }} ./${{ matrix.build }}
-          fi
-          source ./${{ matrix.setup }}
-          source ./${{ matrix.build }}
+          sed -i '/--noconfirm/!s/pacman -S /pacman -S --noconfirm /' ./windows-setup.sh
+          sed -i 's/\r$//' ./windows-setup.sh
+          sed -i 's/\r$//' ./ffmpeg-8.1-windows-build.sh
+          # Conan cache must share the workspace drive (D:) -- see comment above.
+          sed -i 's|/c/.c2|/d/.c2|g' ./windows-setup.sh ./ffmpeg-8.1-windows-build.sh
+          source ./windows-setup.sh
+          source ./ffmpeg-8.1-windows-build.sh
 
       - name: Bundle Windows standalone (collect mingw runtime DLLs)
-        if: matrix.os == 'windows-latest'
         working-directory: conan
         run: |
-          set -euo pipefail
           ./create-windows-bundle.sh build-windows/full_deploy/host ffmpeg-windows-standalone
           # second pass: pull transitive mingw deps that the first pass may have missed
           cd ffmpeg-windows-standalone
@@ -132,40 +165,21 @@ jobs:
           echo "=== final bundle contents ==="
           ls -la
 
-      - name: Bundle Linux standalone (collect .so deps + patchelf RUNPATH)
-        if: matrix.os == 'ubuntu-latest'
-        working-directory: conan
-        run: |
-          set -euo pipefail
-          bash create-linux-bundle.sh build-rhel9/full_deploy/host ffmpeg-linux-standalone
-          echo "=== bundle layout ==="
-          find ffmpeg-linux-standalone -maxdepth 2 -mindepth 1 | sort
-          echo "=== ffmpeg RUNPATH ==="
-          patchelf --print-rpath ffmpeg-linux-standalone/bin/ffmpeg || true
-          echo "=== unresolved deps after bundling (should be only system libs) ==="
-          LD_LIBRARY_PATH=ffmpeg-linux-standalone/lib ldd ffmpeg-linux-standalone/bin/ffmpeg \
-            | (grep "not found" || true)
-
       - name: Package build
         working-directory: conan
         shell: bash
         run: |
-          NAME="${{ matrix.artifact_name }}"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            (cd ffmpeg-windows-standalone && 7z a "../${NAME}.zip" "./*")
-          else
-            (cd ffmpeg-linux-standalone && zip -r "../${NAME}.zip" .)
-          fi
+          (cd ffmpeg-windows-standalone && 7z a "../ffmpeg-windows-x86_64.zip" "./*")
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: conan/${{ matrix.artifact_name }}.zip
+          name: ffmpeg-windows-x86_64
+          path: conan/ffmpeg-windows-x86_64.zip
           if-no-files-found: error
           retention-days: 30
 
   release:
-    needs: [resolve, build]
+    needs: [resolve, build-linux, build-windows]
     if: always() && needs.resolve.result == 'success'
     runs-on: ubuntu-latest
     permissions:
