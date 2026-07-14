@@ -43,6 +43,14 @@ jobs:
           dnf groupinstall -y "Development Tools"
           dnf install -y git tar which zip unzip python3 python3-pip nasm patchelf
 
+      - name: Shim sudo
+        # Container already runs as root, but some Conan system_requirements()
+        # hooks (e.g. vaapi/system) unconditionally shell out to `sudo dnf ...`,
+        # and this base image has no sudo binary at all -- provide a no-op passthrough.
+        run: |
+          printf '#!/bin/sh\nexec "$@"\n' > /usr/bin/sudo
+          chmod +x /usr/bin/sudo
+
       - uses: actions/checkout@v4
         with:
           repository: AcademySoftwareFoundation/EncodingGuidelines
